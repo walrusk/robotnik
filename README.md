@@ -1,12 +1,12 @@
 # Robotnik
 
-Robotnik is a small Bash CLI that turns a natural-language shell request into a short menu of command options, labels each option with a local risk level, and only runs the command you select.
+Robotnik is a small CLI that turns a natural-language shell request into a short menu of command options, labels each option with a local risk level, and only runs the command you select.
 
 It uses an AI command to generate candidate shell commands, then applies its own local safety checks before execution. By default it uses the Codex CLI in read-only, non-interactive mode.
 
 <img src="screenshot.png" alt="Robotnik CLI running in a terminal" width="420">
 
-## Install
+## Install With Bash
 
 Copy and paste this command:
 
@@ -14,7 +14,7 @@ Copy and paste this command:
 curl -fsSL https://raw.githubusercontent.com/walrusk/robotnik/main/install.sh | bash
 ```
 
-The installer downloads the latest `robotnik` script and installs it as `robotnik` in a user-writable bin directory. It prefers a writable directory that is already on your `PATH`, otherwise it installs to `~/.local/bin` and prints the `PATH` line to add to your shell profile.
+The installer downloads the latest Bash `robotnik` script and installs it as `robotnik` in a user-writable bin directory. It prefers a writable directory that is already on your `PATH`, otherwise it installs to `~/.local/bin` and prints the `PATH` line to add to your shell profile.
 
 To install somewhere specific:
 
@@ -28,11 +28,27 @@ To pin an install to a branch, tag, or commit:
 curl -fsSL https://raw.githubusercontent.com/walrusk/robotnik/main/install.sh | ROBOTNIK_REF=main bash
 ```
 
+## Install With Go
+
+If you have Go installed, you can install the Go implementation instead:
+
+```bash
+go install github.com/walrusk/robotnik/cmd/robotnik@latest
+```
+
+Go installs the binary into `GOBIN`, or `GOPATH/bin` when `GOBIN` is unset. Make sure that directory is on your `PATH`.
+
+To install from the current main branch instead of the latest tagged version:
+
+```bash
+go install github.com/walrusk/robotnik/cmd/robotnik@main
+```
+
 ## Requirements
 
-- Bash
-- `jq`
-- Codex CLI, unless you set `ROBOTNIK_AI_CMD`
+- Bash implementation: Bash and `jq`
+- Go implementation: Go to install from source
+- Both implementations: Codex CLI, unless you set `ROBOTNIK_AI_CMD`
 
 Robotnik's default AI backend is:
 
