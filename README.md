@@ -4,7 +4,7 @@ Robotnik is a small Bash CLI that turns a natural-language shell request into a 
 
 It uses an AI command to generate candidate shell commands, then applies its own local safety checks before execution. By default it uses the Codex CLI in read-only, non-interactive mode.
 
-![Robotnik CLI running in a terminal](screenshot.png)
+<img src="screenshot.png" alt="Robotnik CLI running in a terminal" width="420">
 
 ## Install
 
