@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -16,7 +17,9 @@ import (
 	"unicode"
 )
 
-const defaultAICommand = `out=$(mktemp); log=$(mktemp); if codex exec --skip-git-repo-check --ephemeral --sandbox read-only --color never -c approval_policy="never" -c model_reasoning_effort="medium" --output-last-message "$out" - >"$log" 2>&1; then cat "$out"; rc=0; else rc=$?; cat "$log" >&2; fi; rm -f "$out" "$log"; exit $rc`
+const codexAICommand = `out=$(mktemp); log=$(mktemp); if codex exec --skip-git-repo-check --ephemeral --sandbox read-only --color never -c approval_policy="never" -c model_reasoning_effort="medium" --output-last-message "$out" - >"$log" 2>&1; then cat "$out"; rc=0; else rc=$?; cat "$log" >&2; fi; rm -f "$out" "$log"; exit $rc`
+const claudeAICommand = `claude -p --no-session-persistence --permission-mode dontAsk --tools "" --output-format text`
+const defaultAICommand = codexAICommand
 
 const systemPrompt = `You convert a natural-language request into a short menu of Bash command options.
 
@@ -79,8 +82,15 @@ func run(args []string) int {
 
 	prompt := strings.Join(remaining, " ")
 
+	aiCommand, err := resolveAICommand(os.Stdin, os.Stderr)
+	if err != nil {
+		die(err.Error())
+		return 1
+	}
+	_ = os.Setenv("ROBOTNIK_AI_CMD", aiCommand)
+
 	fmt.Fprintln(os.Stderr, "Thinking...")
-	raw, exitCode, err := generateWithAICommand(prompt, os.Stderr)
+	raw, exitCode, err := generateWithAICommand(prompt, aiCommand, os.Stderr)
 	if err != nil {
 		if exitCode >= 0 {
 			return exitCode
@@ -145,8 +155,10 @@ Examples:
   robotnik show the largest files under this repo
 
 Configuration:
-  ROBOTNIK_AI_CMD            Optional custom generator command. Defaults to Codex CLI:
-                             codex exec --skip-git-repo-check --ephemeral --sandbox read-only --color never -c approval_policy="never" -c model_reasoning_effort="medium"
+  ROBOTNIK_AI_CMD            Optional custom generator command. If unset,
+                             Robotnik asks you to choose Claude Code or Codex
+                             on first run and saves the default to:
+                             ${XDG_CONFIG_HOME:-$HOME/.config}/robotnik/config
 
                              The command receives the full prompt on stdin and must print JSON:
                              {"options":[{"title":"","command":"","notes":""}]}.
@@ -186,12 +198,7 @@ func parseArgs(args []string) (allowMax bool, color bool, remaining []string, sh
 	return allowMax, color, nil, false, nil
 }
 
-func generateWithAICommand(prompt string, stderr io.Writer) ([]byte, int, error) {
-	aiCommand := os.Getenv("ROBOTNIK_AI_CMD")
-	if aiCommand == "" {
-		aiCommand = defaultAICommand
-	}
-
+func generateWithAICommand(prompt, aiCommand string, stderr io.Writer) ([]byte, int, error) {
 	generatorPrompt := systemPrompt + "\n" + requestPrompt(prompt)
 	cmd := exec.Command("bash", "-lc", aiCommand)
 	cmd.Stdin = strings.NewReader(generatorPrompt)
@@ -209,6 +216,146 @@ func generateWithAICommand(prompt string, stderr io.Writer) ([]byte, int, error)
 	}
 
 	return stdout.Bytes(), 0, nil
+}
+
+func resolveAICommand(in *os.File, out io.Writer) (string, error) {
+	if aiCommand := os.Getenv("ROBOTNIK_AI_CMD"); aiCommand != "" {
+		return aiCommand, nil
+	}
+
+	configPath, err := robotnikConfigPath()
+	if err != nil {
+		if !isTerminal(in) {
+			return defaultAICommand, nil
+		}
+		return "", err
+	}
+
+	if aiCommand, ok, err := readConfiguredAICommand(configPath); err != nil {
+		return "", err
+	} else if ok {
+		return aiCommand, nil
+	}
+
+	if !isTerminal(in) {
+		return defaultAICommand, nil
+	}
+
+	aiCommand, err := promptForAICommand(in, out)
+	if err != nil {
+		return "", err
+	}
+
+	if err := writeConfiguredAICommand(configPath, aiCommand); err != nil {
+		return "", err
+	}
+
+	fmt.Fprintf(out, "Saved default AI command to %s\n\n", configPath)
+	return aiCommand, nil
+}
+
+func robotnikConfigPath() (string, error) {
+	if path := os.Getenv("ROBOTNIK_CONFIG"); path != "" {
+		return path, nil
+	}
+
+	if configHome := os.Getenv("XDG_CONFIG_HOME"); configHome != "" {
+		return filepath.Join(configHome, "robotnik", "config"), nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", errors.New("could not find home directory for robotnik config")
+	}
+
+	return filepath.Join(home, ".config", "robotnik", "config"), nil
+}
+
+func readConfiguredAICommand(path string) (string, bool, error) {
+	contents, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("could not read robotnik config: %w", err)
+	}
+
+	for _, line := range strings.Split(string(contents), "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "export ")
+		value, ok := strings.CutPrefix(line, "ROBOTNIK_AI_CMD=")
+		if !ok {
+			continue
+		}
+
+		value = strings.TrimSpace(value)
+		value = unquoteConfigValue(value)
+		if value == "" {
+			return "", false, nil
+		}
+		return value, true, nil
+	}
+
+	return "", false, nil
+}
+
+func unquoteConfigValue(value string) string {
+	if len(value) < 2 {
+		return value
+	}
+
+	first := value[0]
+	last := value[len(value)-1]
+	if (first == '\'' && last == '\'') || (first == '"' && last == '"') {
+		return value[1 : len(value)-1]
+	}
+	return value
+}
+
+func promptForAICommand(in *os.File, out io.Writer) (string, error) {
+	reader := bufio.NewReader(in)
+
+	fmt.Fprintln(out, "Choose your AI CLI for Robotnik:")
+	fmt.Fprintln(out, "1. Claude Code")
+	fmt.Fprintln(out, "2. Codex")
+
+	for {
+		fmt.Fprint(out, "Selection [1-2]: ")
+		line, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return "", err
+		}
+
+		choice := strings.TrimSpace(line)
+		choice = strings.TrimSuffix(choice, ".")
+		switch choice {
+		case "1":
+			return claudeAICommand, nil
+		case "2":
+			return codexAICommand, nil
+		default:
+			fmt.Fprintln(out, "Please enter 1 or 2.")
+		}
+
+		if errors.Is(err, io.EOF) {
+			return "", errors.New("no AI CLI selected")
+		}
+	}
+}
+
+func writeConfiguredAICommand(path, aiCommand string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("could not create robotnik config directory: %w", err)
+	}
+
+	contents := "# Robotnik config\n" +
+		"# Used when ROBOTNIK_AI_CMD is not set in the environment.\n" +
+		"ROBOTNIK_AI_CMD=" + aiCommand + "\n"
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		return fmt.Errorf("could not write robotnik config: %w", err)
+	}
+
+	return nil
 }
 
 func requestPrompt(prompt string) string {

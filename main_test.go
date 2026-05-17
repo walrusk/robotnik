@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -8,6 +10,59 @@ import (
 func TestDefaultAICommandSkipsGitRepoCheck(t *testing.T) {
 	if !strings.Contains(defaultAICommand, "--skip-git-repo-check") {
 		t.Fatal("expected default AI command to allow running outside a Git repository")
+	}
+}
+
+func TestReadWriteConfiguredAICommand(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "robotnik", "config")
+
+	if err := writeConfiguredAICommand(configPath, claudeAICommand); err != nil {
+		t.Fatalf("writeConfiguredAICommand returned error: %v", err)
+	}
+
+	got, ok, err := readConfiguredAICommand(configPath)
+	if err != nil {
+		t.Fatalf("readConfiguredAICommand returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected config value to be found")
+	}
+	if got != claudeAICommand {
+		t.Fatalf("configured AI command = %q, want %q", got, claudeAICommand)
+	}
+}
+
+func TestReadConfiguredAICommandAcceptsExportAndQuotes(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(configPath, []byte("export ROBOTNIK_AI_CMD='"+codexAICommand+"'\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	got, ok, err := readConfiguredAICommand(configPath)
+	if err != nil {
+		t.Fatalf("readConfiguredAICommand returned error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected config value to be found")
+	}
+	if got != codexAICommand {
+		t.Fatalf("configured AI command = %q, want %q", got, codexAICommand)
+	}
+}
+
+func TestRobotnikConfigPathUsesXDGConfigHome(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("ROBOTNIK_CONFIG", "")
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	got, err := robotnikConfigPath()
+	if err != nil {
+		t.Fatalf("robotnikConfigPath returned error: %v", err)
+	}
+
+	want := filepath.Join(configHome, "robotnik", "config")
+	if got != want {
+		t.Fatalf("robotnikConfigPath = %q, want %q", got, want)
 	}
 }
 

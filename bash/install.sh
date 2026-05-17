@@ -117,11 +117,11 @@ Install jq with your system package manager before using robotnik.
 EOF
 fi
 
-if ! have codex && [[ -z "${ROBOTNIK_AI_CMD:-}" ]]; then
+if ! have claude && ! have codex && [[ -z "${ROBOTNIK_AI_CMD:-}" ]]; then
   cat <<'EOF'
 
-Warning: codex was not found on PATH.
-Install the Codex CLI or set ROBOTNIK_AI_CMD to a custom generator command.
+Warning: neither claude nor codex was found on PATH.
+Install Claude Code, install the Codex CLI, or set ROBOTNIK_AI_CMD to a custom generator command.
 EOF
 fi
 

@@ -2,7 +2,7 @@
 
 Robotnik is a small CLI that turns a natural-language shell request into a short menu of command options, labels each option with a local risk level, and only runs the command you select.
 
-It uses an AI command to generate candidate shell commands, then applies its own local safety checks before execution. By default it uses the Codex CLI in read-only, non-interactive mode.
+It uses an AI command to generate candidate shell commands, then applies its own local safety checks before execution. On first run, Robotnik asks whether you use Claude Code or Codex and saves that choice as the default AI command.
 
 <img src="screenshot.png" alt="Robotnik CLI running in a terminal" width="420">
 
@@ -50,13 +50,18 @@ curl -fsSL https://raw.githubusercontent.com/walrusk/robotnik/main/bash/install.
 
 - Go implementation: Go to install from source
 - Bash implementation: Bash and `jq`
-- Both implementations: Codex CLI, unless you set `ROBOTNIK_AI_CMD`
+- Both implementations: Claude Code or Codex CLI, unless you set `ROBOTNIK_AI_CMD`
 
-Robotnik's default AI backend is:
+If `ROBOTNIK_AI_CMD` is unset and no Robotnik config exists, the first interactive run asks:
 
-```bash
-codex exec --skip-git-repo-check --ephemeral --sandbox read-only --color never -c approval_policy="never" -c model_reasoning_effort="medium"
+```text
+Choose your AI CLI for Robotnik:
+1. Claude Code
+2. Codex
+Selection [1-2]:
 ```
+
+Robotnik saves the selected default to `${XDG_CONFIG_HOME:-$HOME/.config}/robotnik/config`.
 
 ## Usage
 
@@ -83,7 +88,7 @@ robotnik --allow-max delete old local branches
 
 ## Configuration
 
-Set `ROBOTNIK_AI_CMD` to use a different generator.
+Set `ROBOTNIK_AI_CMD` to use a different generator. An environment value overrides the saved first-run default.
 
 The command receives Robotnik's full prompt on stdin and must print JSON in this shape:
 

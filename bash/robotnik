@@ -3,7 +3,9 @@
 set -euo pipefail
 
 # shellcheck disable=SC2016
-DEFAULT_ROBOTNIK_AI_CMD='out=$(mktemp); log=$(mktemp); if codex exec --skip-git-repo-check --ephemeral --sandbox read-only --color never -c approval_policy=\"never\" -c model_reasoning_effort=\"medium\" --output-last-message "$out" - >"$log" 2>&1; then cat "$out"; rc=0; else rc=$?; cat "$log" >&2; fi; rm -f "$out" "$log"; exit $rc'
+CODEX_ROBOTNIK_AI_CMD='out=$(mktemp); log=$(mktemp); if codex exec --skip-git-repo-check --ephemeral --sandbox read-only --color never -c approval_policy=\"never\" -c model_reasoning_effort=\"medium\" --output-last-message "$out" - >"$log" 2>&1; then cat "$out"; rc=0; else rc=$?; cat "$log" >&2; fi; rm -f "$out" "$log"; exit $rc'
+CLAUDE_ROBOTNIK_AI_CMD='claude -p --no-session-persistence --permission-mode dontAsk --tools "" --output-format text'
+DEFAULT_ROBOTNIK_AI_CMD="$CODEX_ROBOTNIK_AI_CMD"
 
 usage() {
   cat >&2 <<'EOF'
@@ -15,8 +17,10 @@ Examples:
   robotnik show the largest files under this repo
 
 Configuration:
-  ROBOTNIK_AI_CMD            Optional custom generator command. Defaults to Codex CLI:
-                             codex exec --skip-git-repo-check --ephemeral --sandbox read-only --color never -c approval_policy="never" -c model_reasoning_effort="medium"
+  ROBOTNIK_AI_CMD            Optional custom generator command. If unset,
+                             Robotnik asks you to choose Claude Code or Codex
+                             on first run and saves the default to:
+                             ${XDG_CONFIG_HOME:-$HOME/.config}/robotnik/config
 
                              The command receives the full prompt on stdin and must print JSON:
                              {"options":[{"title":"","command":"","notes":""}]}.
@@ -34,6 +38,121 @@ die() {
 
 have() {
   command -v "$1" >/dev/null 2>&1
+}
+
+robotnik_config_path() {
+  if [[ -n "${ROBOTNIK_CONFIG:-}" ]]; then
+    printf '%s\n' "$ROBOTNIK_CONFIG"
+    return
+  fi
+
+  if [[ -n "${XDG_CONFIG_HOME:-}" ]]; then
+    printf '%s\n' "$XDG_CONFIG_HOME/robotnik/config"
+    return
+  fi
+
+  if [[ -n "${HOME:-}" ]]; then
+    printf '%s\n' "$HOME/.config/robotnik/config"
+    return
+  fi
+
+  return 1
+}
+
+read_config_ai_cmd() {
+  local config_file="$1"
+  local line value first last
+
+  [[ -f "$config_file" ]] || return 1
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == export\ ROBOTNIK_AI_CMD=* ]] && line="${line#export }"
+    [[ "$line" == ROBOTNIK_AI_CMD=* ]] || continue
+
+    value="${line#ROBOTNIK_AI_CMD=}"
+    if [[ "${#value}" -ge 2 ]]; then
+      first="${value:0:1}"
+      last="${value: -1}"
+      if { [[ "$first" == "'" ]] && [[ "$last" == "'" ]]; } ||
+         { [[ "$first" == '"' ]] && [[ "$last" == '"' ]]; }; then
+        value="${value:1:${#value}-2}"
+      fi
+    fi
+
+    [[ -n "$value" ]] || return 1
+    printf '%s\n' "$value"
+    return 0
+  done < "$config_file"
+
+  return 1
+}
+
+write_config_ai_cmd() {
+  local config_file="$1"
+  local ai_cmd="$2"
+  local config_dir
+
+  config_dir="$(dirname "$config_file")"
+  mkdir -p "$config_dir" || return 1
+  {
+    echo "# Robotnik config"
+    echo "# Used when ROBOTNIK_AI_CMD is not set in the environment."
+    printf 'ROBOTNIK_AI_CMD=%s\n' "$ai_cmd"
+  } > "$config_file" || return 1
+  chmod 600 "$config_file" 2>/dev/null || true
+}
+
+resolve_ai_cmd() {
+  local config_file choice ai_cmd
+
+  if [[ -n "${ROBOTNIK_AI_CMD:-}" ]]; then
+    printf '%s\n' "$ROBOTNIK_AI_CMD"
+    return
+  fi
+
+  if ! config_file="$(robotnik_config_path)"; then
+    printf '%s\n' "$DEFAULT_ROBOTNIK_AI_CMD"
+    return
+  fi
+
+  if ai_cmd="$(read_config_ai_cmd "$config_file")"; then
+    printf '%s\n' "$ai_cmd"
+    return
+  fi
+
+  if [[ ! -t 0 ]]; then
+    printf '%s\n' "$DEFAULT_ROBOTNIK_AI_CMD"
+    return
+  fi
+
+  echo "Choose your AI CLI for Robotnik:" >&2
+  echo "1. Claude Code" >&2
+  echo "2. Codex" >&2
+
+  while true; do
+    printf 'Selection [1-2]: ' >&2
+    IFS= read -r choice || die "no AI CLI selected"
+    choice="${choice%.}"
+
+    case "$choice" in
+      1)
+        ai_cmd="$CLAUDE_ROBOTNIK_AI_CMD"
+        break
+        ;;
+      2)
+        ai_cmd="$CODEX_ROBOTNIK_AI_CMD"
+        break
+        ;;
+      *)
+        echo "Please enter 1 or 2." >&2
+        ;;
+    esac
+  done
+
+  write_config_ai_cmd "$config_file" "$ai_cmd" || die "could not write robotnik config: $config_file"
+  echo "Saved default AI command to $config_file" >&2
+  echo >&2
+  printf '%s\n' "$ai_cmd"
 }
 
 allow_max=false
@@ -94,7 +213,8 @@ fi
 prompt="$*"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/robotnik.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
-robotnik_ai_cmd="${ROBOTNIK_AI_CMD:-$DEFAULT_ROBOTNIK_AI_CMD}"
+robotnik_ai_cmd="$(resolve_ai_cmd)"
+export ROBOTNIK_AI_CMD="$robotnik_ai_cmd"
 
 system_prompt() {
   cat <<'EOF'
