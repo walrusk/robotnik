@@ -1,8 +1,15 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
+
+func TestDefaultAICommandSkipsGitRepoCheck(t *testing.T) {
+	if !strings.Contains(defaultAICommand, "--skip-git-repo-check") {
+		t.Fatal("expected default AI command to allow running outside a Git repository")
+	}
+}
 
 func TestNormalizeOptionsAcceptsObjectAndAliases(t *testing.T) {
 	raw := []byte(`{

@@ -16,7 +16,7 @@ import (
 	"unicode"
 )
 
-const defaultAICommand = `out=$(mktemp); log=$(mktemp); if codex exec --ephemeral --sandbox read-only --color never -c approval_policy="never" -c model_reasoning_effort="medium" --output-last-message "$out" - >"$log" 2>&1; then cat "$out"; rc=0; else rc=$?; cat "$log" >&2; fi; rm -f "$out" "$log"; exit $rc`
+const defaultAICommand = `out=$(mktemp); log=$(mktemp); if codex exec --skip-git-repo-check --ephemeral --sandbox read-only --color never -c approval_policy="never" -c model_reasoning_effort="medium" --output-last-message "$out" - >"$log" 2>&1; then cat "$out"; rc=0; else rc=$?; cat "$log" >&2; fi; rm -f "$out" "$log"; exit $rc`
 
 const systemPrompt = `You convert a natural-language request into a short menu of Bash command options.
 
@@ -146,7 +146,7 @@ Examples:
 
 Configuration:
   ROBOTNIK_AI_CMD            Optional custom generator command. Defaults to Codex CLI:
-                             codex exec --ephemeral --sandbox read-only --color never -c approval_policy="never" -c model_reasoning_effort="medium"
+                             codex exec --skip-git-repo-check --ephemeral --sandbox read-only --color never -c approval_policy="never" -c model_reasoning_effort="medium"
 
                              The command receives the full prompt on stdin and must print JSON:
                              {"options":[{"title":"","command":"","notes":""}]}.

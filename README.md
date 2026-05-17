@@ -53,7 +53,7 @@ go install github.com/walrusk/robotnik/cmd/robotnik@main
 Robotnik's default AI backend is:
 
 ```bash
-codex exec --ephemeral --sandbox read-only --color never -c approval_policy="never" -c model_reasoning_effort="medium"
+codex exec --skip-git-repo-check --ephemeral --sandbox read-only --color never -c approval_policy="never" -c model_reasoning_effort="medium"
 ```
 
 ## Usage
