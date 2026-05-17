@@ -5,7 +5,7 @@ set -euo pipefail
 REPO_OWNER="${ROBOTNIK_REPO_OWNER:-walrusk}"
 REPO_NAME="${ROBOTNIK_REPO_NAME:-robotnik}"
 REF="${ROBOTNIK_REF:-main}"
-SOURCE_URL="${ROBOTNIK_URL:-https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REF}/robotnik}"
+SOURCE_URL="${ROBOTNIK_URL:-https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REF}/bash/robotnik}"
 
 die() {
   echo "robotnik install: $*" >&2

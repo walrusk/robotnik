@@ -2,6 +2,7 @@
 
 set -euo pipefail
 
+# shellcheck disable=SC2016
 DEFAULT_ROBOTNIK_AI_CMD='out=$(mktemp); log=$(mktemp); if codex exec --skip-git-repo-check --ephemeral --sandbox read-only --color never -c approval_policy=\"never\" -c model_reasoning_effort=\"medium\" --output-last-message "$out" - >"$log" 2>&1; then cat "$out"; rc=0; else rc=$?; cat "$log" >&2; fi; rm -f "$out" "$log"; exit $rc'
 
 usage() {

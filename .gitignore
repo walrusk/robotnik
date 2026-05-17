@@ -1,0 +1,5 @@
+/dist/
+/robotnik
+*.test
+coverage.out
+.vscode

@@ -6,34 +6,12 @@ It uses an AI command to generate candidate shell commands, then applies its own
 
 <img src="screenshot.png" alt="Robotnik CLI running in a terminal" width="420">
 
-## Install With Bash
-
-Copy and paste this command:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/walrusk/robotnik/main/install.sh | bash
-```
-
-The installer downloads the latest Bash `robotnik` script and installs it as `robotnik` in a user-writable bin directory. It prefers a writable directory that is already on your `PATH`, otherwise it installs to `~/.local/bin` and prints the `PATH` line to add to your shell profile.
-
-To install somewhere specific:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/walrusk/robotnik/main/install.sh | ROBOTNIK_INSTALL_DIR="$HOME/bin" bash
-```
-
-To pin an install to a branch, tag, or commit:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/walrusk/robotnik/main/install.sh | ROBOTNIK_REF=main bash
-```
-
 ## Install With Go
 
-If you have Go installed, you can install the Go implementation instead:
+If you have Go installed, install the primary implementation:
 
 ```bash
-go install github.com/walrusk/robotnik/cmd/robotnik@latest
+go install github.com/walrusk/robotnik@latest
 ```
 
 Go installs the binary into `GOBIN`, or `GOPATH/bin` when `GOBIN` is unset. Make sure that directory is on your `PATH`.
@@ -41,13 +19,37 @@ Go installs the binary into `GOBIN`, or `GOPATH/bin` when `GOBIN` is unset. Make
 To install from the current main branch instead of the latest tagged version:
 
 ```bash
-go install github.com/walrusk/robotnik/cmd/robotnik@main
+go install github.com/walrusk/robotnik@main
+```
+
+## Install With Bash
+
+The Bash implementation is the secondary install path for systems where you do not want to install the Go binary.
+
+Copy and paste this command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/walrusk/robotnik/main/bash/install.sh | bash
+```
+
+The installer downloads the latest `bash/robotnik` script and installs it as `robotnik` in a user-writable bin directory. It prefers a writable directory that is already on your `PATH`, otherwise it installs to `~/.local/bin` and prints the `PATH` line to add to your shell profile.
+
+To install somewhere specific:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/walrusk/robotnik/main/bash/install.sh | ROBOTNIK_INSTALL_DIR="$HOME/bin" bash
+```
+
+To pin an install to a branch, tag, or commit:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/walrusk/robotnik/main/bash/install.sh | ROBOTNIK_REF=main bash
 ```
 
 ## Requirements
 
-- Bash implementation: Bash and `jq`
 - Go implementation: Go to install from source
+- Bash implementation: Bash and `jq`
 - Both implementations: Codex CLI, unless you set `ROBOTNIK_AI_CMD`
 
 Robotnik's default AI backend is:
@@ -101,6 +103,26 @@ Example:
 
 ```bash
 ROBOTNIK_AI_CMD='my-command-generator --json' robotnik list recent git branches
+```
+
+## Development
+
+Run the Go implementation from source:
+
+```bash
+go run . show the largest files under this repo
+```
+
+Run tests:
+
+```bash
+go test ./...
+```
+
+Build a local binary:
+
+```bash
+go build -o dist/robotnik .
 ```
 
 ## Uninstall
