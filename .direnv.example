@@ -1,0 +1,15 @@
+# Copy this file to .envrc, then run:
+#   direnv allow
+
+# Make the repo checkout's robotnik executable available first on PATH.
+export PATH="$PWD:$PATH"
+
+# Optional: install script destination for local testing.
+export ROBOTNIK_INSTALL_DIR="$HOME/.local/bin"
+
+# Optional: install script source ref. Use a branch, tag, or commit.
+export ROBOTNIK_REF="main"
+
+# Optional: override the AI command Robotnik uses to generate options.
+# The command receives a prompt on stdin and must print Robotnik-compatible JSON.
+# export ROBOTNIK_AI_CMD='codex exec --ephemeral --sandbox read-only --color never -c approval_policy="never" -c model_reasoning_effort="medium" --output-last-message /dev/stdout -'

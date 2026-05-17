@@ -1,0 +1,358 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+DEFAULT_ROBOTNIK_AI_CMD='out=$(mktemp); log=$(mktemp); if codex exec --ephemeral --sandbox read-only --color never -c approval_policy=\"never\" -c model_reasoning_effort=\"medium\" --output-last-message "$out" - >"$log" 2>&1; then cat "$out"; rc=0; else rc=$?; cat "$log" >&2; fi; rm -f "$out" "$log"; exit $rc'
+
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  robotnik [--allow-max] [--no-color] <natural language shell request>
+
+Examples:
+  robotnik delete all branches except for the current one and main
+  robotnik show the largest files under this repo
+
+Configuration:
+  ROBOTNIK_AI_CMD            Optional custom generator command. Defaults to Codex CLI:
+                             codex exec --ephemeral --sandbox read-only --color never -c approval_policy="never" -c model_reasoning_effort="medium"
+
+                             The command receives the full prompt on stdin and must print JSON:
+                             {"options":[{"title":"","command":"","notes":""}]}.
+
+Safety:
+  Robotnik asks AI for command candidates, then independently assigns a local risk label.
+  Selecting a max-risk command is refused unless --allow-max is passed.
+EOF
+}
+
+die() {
+  echo "robotnik: $*" >&2
+  exit 1
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+allow_max=false
+color=true
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --allow-max)
+      allow_max=true
+      shift
+      ;;
+    --no-color)
+      color=false
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      die "unknown option: $1"
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+if [[ $# -eq 0 ]]; then
+  usage
+  exit 1
+fi
+
+have jq || die "jq is required"
+
+if [[ ! -t 1 || -n "${NO_COLOR:-}" || "${TERM:-}" == "dumb" ]]; then
+  color=false
+fi
+
+green=""
+orange=""
+red=""
+bold_red=""
+reset=""
+
+if [[ "$color" == true ]]; then
+  green=$'\033[32m'
+  orange=$'\033[38;5;208m'
+  red=$'\033[31m'
+  bold_red=$'\033[1;31m'
+  reset=$'\033[0m'
+fi
+
+prompt="$*"
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/robotnik.XXXXXX")"
+trap 'rm -rf "$tmp_dir"' EXIT
+robotnik_ai_cmd="${ROBOTNIK_AI_CMD:-$DEFAULT_ROBOTNIK_AI_CMD}"
+
+system_prompt() {
+  cat <<'EOF'
+You convert a natural-language request into a short menu of Bash command options.
+
+Return JSON only, with this shape:
+{"options":[{"title":"short label","command":"single-line bash command","notes":"brief caveat"}]}
+
+Rules:
+- Produce exactly 2 options.
+- Every command must be shown in full and fit on one shell line.
+- Do not run shell commands, inspect files, or modify the workspace. Only return JSON.
+- Prefer commands that run on macOS and Linux Bash.
+- Prefer read-only preview commands first when the request might mutate, delete, overwrite, publish, install, or expose data.
+- Avoid sudo unless the user explicitly requested system-level changes.
+- Avoid curl/wget piped into a shell.
+- Avoid commands that read .env, .env.*, .envrc, private keys, tokens, credentials, or browser profiles.
+- If the request is ambiguous, include a read-only inspection command rather than guessing destructively.
+- Do not wrap commands in markdown fences.
+- Do not include risk labels; the wrapper will evaluate risk independently.
+EOF
+}
+
+request_prompt() {
+  cat <<EOF
+User request:
+$prompt
+
+Working directory:
+$PWD
+
+Shell:
+bash
+
+Operating system:
+$(uname -s)
+EOF
+}
+
+generate_with_ai_command() {
+  local generator_prompt
+  generator_prompt="$(printf '%s\n\n%s\n' "$(system_prompt)" "$(request_prompt)")"
+  printf '%s' "$generator_prompt" | bash -lc "$robotnik_ai_cmd"
+}
+
+normalize_options() {
+  local raw_file="$1"
+  local normalized_file="$2"
+
+  if jq -e . "$raw_file" >/dev/null 2>&1; then
+    jq '
+      if type == "array" then {options: .} else . end
+      | {
+          options: [
+            .options[]?
+            | {
+                title: ((.title // .label // .description // "Command") | tostring | gsub("[\r\n\t]+"; " ")),
+                command: ((.command // .cmd // "") | tostring | gsub("[\r\n]+"; " ")),
+                notes: ((.notes // .explanation // .reason // "") | tostring | gsub("[\r\n\t]+"; " "))
+              }
+            | select(.command != "")
+          ][0:9]
+        }
+    ' "$raw_file" > "$normalized_file"
+    jq -e '.options | length > 0' "$normalized_file" >/dev/null
+    return
+  fi
+
+  die "AI backend did not return valid JSON"
+}
+
+contains_word() {
+  local haystack="$1"
+  local needle="$2"
+  [[ "$haystack" =~ (^|[^[:alnum:]_./-])$needle([^[:alnum:]_./-]|$) ]]
+}
+
+risk_for_command() {
+  local command="$1"
+  local lower
+  lower="$(printf '%s' "$command" | tr '[:upper:]' '[:lower:]')"
+
+  if [[ "$command" == *"git branch -D"* ]]; then
+    echo "max"
+    return
+  fi
+
+  if [[ "$lower" == *"rm -rf /"* ||
+        "$lower" == *"rm -fr /"* ||
+        "$lower" == *"mkfs"* ||
+        "$lower" == *"dd if="* ||
+        "$lower" == *"diskutil erase"* ||
+        "$lower" == *"git reset --hard"* ||
+        "$lower" == *"git clean -fd"* ||
+        "$lower" == *"git clean -df"* ||
+        "$lower" == *"git push --force"* ||
+        "$lower" == *"git push -f"* ||
+        "$lower" == *"chmod -r 777 /"* ||
+        "$lower" == *"chown -r "* ||
+        "$lower" == *"docker system prune"* ||
+        "$lower" == *"docker volume prune"* ||
+        "$lower" == *"drop database"* ]]; then
+    echo "max"
+    return
+  fi
+
+  if [[ "$lower" =~ (curl|wget)[^|]*\|[[:space:]]*(sh|bash) ||
+        "$lower" =~ (^|[[:space:];|&])eval[[:space:]] ||
+        "$lower" =~ (^|[[:space:];|&])sudo[[:space:]] ]]; then
+    echo "max"
+    return
+  fi
+
+  if [[ "$lower" == *"git branch -d"* ||
+        "$lower" == *"git branch --delete"* ||
+        "$lower" == *"git rebase"* ||
+        "$lower" == *"git push"* ||
+        "$lower" == *"rm -rf"* ||
+        "$lower" == *"rm -fr"* ||
+        "$lower" == *"find "*"-delete"* ||
+        "$lower" == *"find "*"-exec rm"* ||
+        "$lower" == *"xargs rm"* ||
+        "$lower" == *"kubectl delete"* ||
+        "$lower" == *"docker rm"* ||
+        "$lower" == *"docker rmi"* ||
+        "$lower" == *"npm publish"* ||
+        "$lower" == *"gh pr merge"* ||
+        "$lower" == *"truncate table"* ]]; then
+    echo "high"
+    return
+  fi
+
+  if [[ "$lower" == *">"* ||
+        "$lower" == *"tee "* ||
+        "$lower" == *"sed -i"* ||
+        "$lower" == *"perl -pi"* ||
+        "$lower" == *"git commit"* ||
+        "$lower" == *"git merge"* ||
+        "$lower" == *"git checkout"* ||
+        "$lower" == *"git switch"* ||
+        "$lower" == *"git pull"* ||
+        "$lower" == *"npm install"* ||
+        "$lower" == *"npm add"* ||
+        "$lower" == *"pnpm install"* ||
+        "$lower" == *"yarn add"* ||
+        "$lower" == *"pip install"* ||
+        "$lower" == *"brew install"* ]]; then
+    echo "med"
+    return
+  fi
+
+  if contains_word "$lower" "rm" ||
+     contains_word "$lower" "rmdir" ||
+     contains_word "$lower" "unlink" ||
+     contains_word "$lower" "mv" ||
+     contains_word "$lower" "cp" ||
+     contains_word "$lower" "mkdir" ||
+     contains_word "$lower" "touch" ||
+     contains_word "$lower" "chmod"; then
+    echo "med"
+    return
+  fi
+
+  if [[ "$lower" =~ ^[[:space:]]*(pwd|date|whoami|true|false)[[:space:]]*$ ||
+        "$lower" =~ ^[[:space:]]*(echo|printf)[[:space:]] ]]; then
+    echo "zero"
+    return
+  fi
+
+  if [[ "$lower" =~ (^|[[:space:];|&])(ls|find|grep|rg|cat|head|tail|wc|awk|git[[:space:]]+status|git[[:space:]]+diff|git[[:space:]]+log|git[[:space:]]+branch|git[[:space:]]+rev-parse)([[:space:];|&]|$) ]]; then
+    echo "low"
+    return
+  fi
+
+  echo "low"
+}
+
+color_risk() {
+  local risk="$1"
+  case "$risk" in
+    zero|low)
+      printf '%s%s%s' "$green" "$risk" "$reset"
+      ;;
+    med)
+      printf '%s%s%s' "$orange" "$risk" "$reset"
+      ;;
+    high)
+      printf '%s%s%s' "$red" "$risk" "$reset"
+      ;;
+    max)
+      printf '%s%s%s' "$bold_red" "$risk" "$reset"
+      ;;
+    *)
+      printf '%s' "$risk"
+      ;;
+  esac
+}
+
+raw_file="$tmp_dir/raw.json"
+options_file="$tmp_dir/options.json"
+
+echo "Thinking..." >&2
+generate_with_ai_command > "$raw_file"
+
+normalize_options "$raw_file" "$options_file"
+
+titles=()
+commands=()
+notes=()
+
+while IFS= read -r title; do
+  titles+=("$title")
+done < <(jq -r '.options[].title' "$options_file")
+
+while IFS= read -r command; do
+  commands+=("$command")
+done < <(jq -r '.options[].command' "$options_file")
+
+while IFS= read -r note; do
+  notes+=("$note")
+done < <(jq -r '.options[].notes' "$options_file")
+
+risks=()
+
+echo
+echo "Options:"
+for i in "${!commands[@]}"; do
+  number=$((i + 1))
+  risk="$(risk_for_command "${commands[$i]}")"
+  risks+=("$risk")
+
+  printf '%d. [%s risk] %s\n' "$number" "$(color_risk "$risk")" "${commands[$i]}"
+done
+
+echo
+if [[ -t 0 ]]; then
+  read -r -n 1 -p "Run option [1-${#commands[@]}], or q to cancel: " choice
+  echo
+else
+  read -r choice
+fi
+
+if [[ "$choice" == "q" || "$choice" == "Q" || -z "$choice" ]]; then
+  echo "Cancelled."
+  exit 0
+fi
+
+if [[ ! "$choice" =~ ^[0-9]+$ || "$choice" -lt 1 || "$choice" -gt "${#commands[@]}" ]]; then
+  die "invalid selection: $choice"
+fi
+
+selected_index=$((choice - 1))
+selected_risk="${risks[$selected_index]}"
+selected_command="${commands[$selected_index]}"
+
+if [[ "$selected_risk" == "max" && "$allow_max" != true ]]; then
+  die "refusing to run max-risk command without --allow-max"
+fi
+
+echo
+printf 'Running [%s]: %s\n' "$(color_risk "$selected_risk")" "$selected_command"
+exec bash -c "$selected_command"
